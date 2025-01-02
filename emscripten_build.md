@@ -58,7 +58,7 @@ rm -r stage
 ```
 
 ## Update Makefile
-See the recent commit to the Makefile on my branch.
+See the recent commit to the Makefile on my branch [here](https://github.com/RayBB/tilemaker/pull/1/).
 
 ```
 make clean
