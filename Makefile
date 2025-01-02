@@ -79,6 +79,104 @@ CFLAGS ?= -O3 -Wall -Wno-unknown-pragmas -Wno-sign-compare -std=c99 -fPIE -DTM_V
 LIB := -L$(PLATFORM_PATH)/lib $(LUA_LIBS) -lboost_program_options -lsqlite3 -lboost_filesystem -lboost_system -lshp -pthread
 INC := -I$(PLATFORM_PATH)/include -isystem ./include -I./src $(LUA_CFLAGS)
 
+# Add Boost path for Emscripten build
+BOOST_ROOT ?= $(HOME)/boost_1_87_0
+BOOST_STAGE ?= $(BOOST_ROOT)/stage/lib
+
+# Add debug output
+$(info Using Boost root: $(BOOST_ROOT))
+$(info Using Boost stage: $(BOOST_STAGE))
+
+# Update Emscripten configuration
+EMXX ?= em++
+EMCC ?= emcc
+EM_CXXFLAGS = -O3 -s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap'] \
+              -s EXPORTED_FUNCTIONS=['_malloc','_free'] -std=c++14 \
+              -s NO_EXIT_RUNTIME=1 -s "EXTRA_EXPORTED_RUNTIME_METHODS=['ccall', 'cwrap']" \
+              -s USE_SQLITE3=1 \
+              -I$(BOOST_ROOT) \
+              -DBOOST_ASIO_DISABLE_STD_ALIGNED_ALLOC \
+              -DBOOST_ASIO_DISABLE_EPOLL \
+              -DBOOST_ASIO_HAS_POSIX_STREAM_DESCRIPTOR=0 \
+              -DBOOST_ASIO_DISABLE_SIGNAL \
+              -DBOOST_ASIO_HAS_IO_URING=0 \
+              -DBOOST_ASIO_DISABLE_EVENTFD \
+              -DBOOST_ASIO_HAS_FILE=0 \
+              -DBOOST_ASIO_HAS_POSIX_STREAM_DESCRIPTOR=0 \
+              -DBOOST_ASIO_HAS_PIPE=0 \
+              -DBOOST_ASIO_HAS_LOCAL_SOCKETS=0 \
+              -DBOOST_ASIO_HAS_SIGNAL=0 \
+              -DBOOST_ASIO_NO_SIGNAL_BLOCKING=1 \
+              -DBOOST_ASIO_DISABLE_IO_URING \
+              -DBOOST_ASIO_HAS_IO_URING=0
+EM_CFLAGS = -O3 -s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap'] \
+            -s EXPORTED_FUNCTIONS=['_malloc','_free'] \
+            -s NO_EXIT_RUNTIME=1 -s "EXTRA_EXPORTED_RUNTIME_METHODS=['ccall', 'cwrap']" \
+            -s USE_SQLITE3=1
+
+# Web target
+.PHONY: web
+
+web: tilemaker.js
+
+tilemaker.js: \
+	src/attribute_store.o \
+	src/coordinates_geom.o \
+	src/coordinates.o \
+	src/external/streamvbyte_decode.o \
+	src/external/streamvbyte_encode.o \
+	src/external/streamvbyte_zigzag.o \
+	src/external/libdeflate/lib/adler32.o \
+	src/external/libdeflate/lib/arm/cpu_features.o \
+	src/external/libdeflate/lib/crc32.o \
+	src/external/libdeflate/lib/deflate_compress.o \
+	src/external/libdeflate/lib/deflate_decompress.o \
+	src/external/libdeflate/lib/gzip_compress.o \
+	src/external/libdeflate/lib/gzip_decompress.o \
+	src/external/libdeflate/lib/utils.o \
+	src/external/libdeflate/lib/x86/cpu_features.o \
+	src/external/libdeflate/lib/zlib_compress.o \
+	src/external/libdeflate/lib/zlib_decompress.o \
+	src/geojson_processor.o \
+	src/geom.o \
+	src/helpers.o \
+	src/mbtiles.o \
+	src/mmap_allocator.o \
+	src/node_stores.o \
+	src/options_parser.o \
+	src/osm_lua_processing.o \
+	src/osm_mem_tiles.o \
+	src/osm_store.o \
+	src/output_object.o \
+	src/pbf_processor.o \
+	src/pbf_reader.o \
+	src/pmtiles.o \
+	src/pooled_string.o \
+	src/relation_roles.o \
+	src/sharded_node_store.o \
+	src/sharded_way_store.o \
+	src/shared_data.o \
+	src/shp_mem_tiles.o \
+	src/shp_processor.o \
+	src/significant_tags.o \
+	src/sorted_node_store.o \
+	src/sorted_way_store.o \
+	src/tag_map.o \
+	src/tile_coordinates_set.o \
+	src/tile_data.o \
+	src/tilemaker.o \
+	src/tile_worker.o \
+	src/visvalingam.o \
+	src/way_stores.o
+	$(EMXX) $(EM_CXXFLAGS) -o $@ $^ $(INC) \
+		-L$(BOOST_STAGE) \
+		-lboost_program_options \
+		-lboost_filesystem \
+		-lboost_system \
+		$(LUA_LIBS) -lsqlite3 \
+		--pre-js src/web/pre.js \
+		--post-js src/web/post.js
+
 # Targets
 .PHONY: test
 
@@ -247,11 +345,12 @@ server: \
 	server/server.o 
 	$(CXX) $(CXXFLAGS) -o tilemaker-server $^ $(INC) $(LIB) $(LDFLAGS)
 
+# Modify the .o compilation rules to use appropriate flags for C/C++
 %.o: %.cpp
-	$(CXX) $(CXXFLAGS) -o $@ -c $< $(INC)
+	$(if $(findstring em++,$(CXX)),$(CXX) $(EM_CXXFLAGS) $(INC) -I$(BOOST_ROOT),$(CXX) $(CXXFLAGS) $(INC)) -o $@ -c $<
 
 %.o: %.c
-	$(CC) $(CFLAGS) -o $@ -c $< $(INC)
+	$(if $(findstring emcc,$(CC)),$(CC) $(EM_CFLAGS) $(INC),$(CC) $(CFLAGS) $(INC)) -o $@ -c $<
 
 install:
 	install -m 0755 -d $(DESTDIR)$(prefix)/bin/
@@ -262,5 +361,8 @@ install:
 
 clean:
 	rm -f tilemaker tilemaker-server src/*.o src/external/*.o src/external/libdeflate/lib/*.o src/external/libdeflate/lib/*/*.o include/*.o include/*.pb.h server/*.o test/*.o
+
+clean-web:
+	rm -f tilemaker.js tilemaker.wasm
 
 .PHONY: install

@@ -19,3 +19,5 @@ include/vector_tile.pb.h
 coastline
 landcover
 /test.*
+
+boost_1_87_0
